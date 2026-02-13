@@ -1,0 +1,2 @@
+option('build_game', type: 'boolean', value: true, description: 'Build SDL2 desktop game executable')
+option('enable_lsan', type: 'boolean', value: false, description: 'Enable LeakSanitizer in tests (may fail in restricted sandboxes)')

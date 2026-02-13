@@ -1,0 +1,9 @@
+[wrap-git]
+directory = SDL2
+url = https://github.com/libsdl-org/SDL.git
+revision = release-2.32.8
+depth = 1
+method = cmake
+
+[provide]
+dependency_names = sdl2, SDL2

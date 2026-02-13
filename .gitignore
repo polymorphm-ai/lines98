@@ -1,0 +1,9 @@
+/build/
+/build-*/
+/.cache/
+*.o
+*.obj
+*.a
+*.so
+*.log
+*.exe
