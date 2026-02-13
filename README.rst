@@ -24,7 +24,7 @@ portable across Linux distributions.
 Build
 -----
 
-.. code-block:: bash
+Build commands::
 
    meson setup build --wrap-mode=forcefallback
    meson compile -C build
@@ -32,7 +32,7 @@ Build
 Run
 ---
 
-.. code-block:: bash
+Run command::
 
    ./build/lines98
 
@@ -45,13 +45,13 @@ Controls
 Tests
 -----
 
-.. code-block:: bash
+Run all tests::
 
    meson test -C build --print-errorlogs
 
 Run logic tests only (without building the SDL app):
 
-.. code-block:: bash
+::
 
    meson setup build-tests -Dbuild_game=false
    meson test -C build-tests --print-errorlogs
@@ -61,14 +61,14 @@ Memory checks
 
 ASan/UBSan:
 
-.. code-block:: bash
+::
 
    meson setup build-asan -Db_sanitize=address,undefined -Dbuild_game=false
    meson test -C build-asan --print-errorlogs
 
 LeakSanitizer (for environments where ``ptrace`` is available):
 
-.. code-block:: bash
+::
 
    meson setup build-lsan -Db_sanitize=address,undefined -Dbuild_game=false -Denable_lsan=true
    meson test -C build-lsan --print-errorlogs
