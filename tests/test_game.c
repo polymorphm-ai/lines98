@@ -103,6 +103,35 @@ static int test_spawn_and_game_over(void) {
     return 0;
 }
 
+static int test_multi_line_single_move_scoring(void) {
+    Game game;
+    game_init(&game, 99);
+    clear_board(&game);
+
+    /* Prepare a board where one move closes both a vertical (9) and a horizontal (5)
+       line through the center cell. Total unique cleared balls = 13. */
+    for (int r = 0; r < GAME_BOARD_SIZE; ++r) {
+        if (r != 4) {
+            game.board[r * GAME_BOARD_SIZE + 4] = 2;
+        }
+    }
+    for (int c = 5; c < GAME_BOARD_SIZE; ++c) {
+        game.board[4 * GAME_BOARD_SIZE + c] = 2;
+    }
+    game.board[4 * GAME_BOARD_SIZE + 2] = 2;
+
+    GameAction a = game_click(&game, 4, 2);
+    CHECK(a == GAME_ACTION_SELECTED);
+    a = game_click(&game, 4, 4);
+    CHECK(a == GAME_ACTION_MOVED);
+
+    CHECK(game_empty_count(&game) == GAME_CELLS);
+    CHECK(game.score == 138);
+    CHECK(game.game_over == false);
+
+    return 0;
+}
+
 int main(void) {
     if (test_init() != 0) {
         return 1;
@@ -114,6 +143,9 @@ int main(void) {
         return 1;
     }
     if (test_spawn_and_game_over() != 0) {
+        return 1;
+    }
+    if (test_multi_line_single_move_scoring() != 0) {
         return 1;
     }
 
