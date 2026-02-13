@@ -500,6 +500,9 @@ static void draw_move_animation(SDL_Renderer *renderer, const App *app) {
     if (!anim->active || !anim->move.active || anim->move.color == 0 || anim->move.path_len < 2) {
         return;
     }
+    if (anim->t >= anim->move.duration) {
+        return;
+    }
 
     float u = (anim->t / anim->move.duration) * (float)(anim->move.path_len - 1);
     if (u < 0.0f) {
