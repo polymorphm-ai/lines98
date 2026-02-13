@@ -14,6 +14,7 @@
 #include "fx_particles.h"
 #include "game.h"
 #include "render_ui.h"
+#include "turn_controller.h"
 #include "turn_anim.h"
 
 #ifndef M_PI
@@ -67,11 +68,6 @@ static int ball_center_y(int row) {
     return BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
 }
 
-/* Converts board row/col to linear index. */
-static int rc_to_idx(int row, int col) {
-    return row * GAME_BOARD_SIZE + col;
-}
-
 /* Converts linear index to board row/col. */
 static bool idx_to_rc(int idx, int *row, int *col) {
     if (idx < 0 || idx >= GAME_CELLS) {
@@ -82,86 +78,9 @@ static bool idx_to_rc(int idx, int *row, int *col) {
     return true;
 }
 
-/* Checks whether row/col lies inside board bounds. */
-static bool in_bounds(int row, int col) {
-    return row >= 0 && row < GAME_BOARD_SIZE && col >= 0 && col < GAME_BOARD_SIZE;
-}
-
 /* Copies authoritative game board into render board. */
 static void sync_render_board(App *app) {
     memcpy(app->render_board, app->game.board, sizeof(app->render_board));
-}
-
-/* Rebuilds shortest path for move animation on a board snapshot. */
-static bool build_move_path(const uint8_t *board, int from_idx, int to_idx, int *path, int *path_len) {
-    if (from_idx < 0 || from_idx >= GAME_CELLS || to_idx < 0 || to_idx >= GAME_CELLS) {
-        return false;
-    }
-    if (from_idx == to_idx) {
-        path[0] = from_idx;
-        *path_len = 1;
-        return true;
-    }
-
-    int prev[GAME_CELLS];
-    for (int i = 0; i < GAME_CELLS; ++i) {
-        prev[i] = -1;
-    }
-
-    int queue[GAME_CELLS];
-    int head = 0;
-    int tail = 0;
-    queue[tail++] = from_idx;
-    prev[from_idx] = from_idx;
-
-    const int dr[4] = {-1, 1, 0, 0};
-    const int dc[4] = {0, 0, -1, 1};
-    bool found = false;
-
-    while (head < tail && !found) {
-        int cur = queue[head++];
-        int row;
-        int col;
-        (void)idx_to_rc(cur, &row, &col);
-        for (int k = 0; k < 4; ++k) {
-            int nr = row + dr[k];
-            int nc = col + dc[k];
-            if (!in_bounds(nr, nc)) {
-                continue;
-            }
-            int nxt = rc_to_idx(nr, nc);
-            if (prev[nxt] != -1) {
-                continue;
-            }
-            if (nxt != to_idx && board[nxt] != 0) {
-                continue;
-            }
-
-            prev[nxt] = cur;
-            if (nxt == to_idx) {
-                found = true;
-                break;
-            }
-            queue[tail++] = nxt;
-        }
-    }
-
-    if (!found) {
-        return false;
-    }
-
-    int rev[TA_MAX_PATH_NODES];
-    int n = 0;
-    for (int cur = to_idx; cur != from_idx; cur = prev[cur]) {
-        rev[n++] = cur;
-    }
-    rev[n++] = from_idx;
-
-    for (int i = 0; i < n; ++i) {
-        path[i] = rev[n - 1 - i];
-    }
-    *path_len = n;
-    return true;
 }
 
 /* Resets turn animation state to idle. */
@@ -419,7 +338,7 @@ static void draw_board(SDL_Renderer *renderer, const App *app) {
 
     for (int row = 0; row < GAME_BOARD_SIZE; ++row) {
         for (int col = 0; col < GAME_BOARD_SIZE; ++col) {
-            int idx = rc_to_idx(row, col);
+            int idx = row * GAME_BOARD_SIZE + col;
             uint8_t cell = turn_anim_active(&app->turn_anim) ? app->render_board[idx] : app->game.board[idx];
             if (cell == 0) {
                 continue;
@@ -516,30 +435,23 @@ static void handle_click(App *app, int x, int y) {
         return;
     }
 
-    uint8_t before[GAME_CELLS];
-    memcpy(before, app->game.board, sizeof(before));
-    int selected_before = app->game.selected_index;
-    int to_idx = rc_to_idx(row, col);
-    int path[TA_MAX_PATH_NODES];
-    int path_len = 0;
-    if (selected_before >= 0 && selected_before < GAME_CELLS && before[to_idx] == 0) {
-        (void)build_move_path(before, selected_before, to_idx, path, &path_len);
-    }
-    int old_score = app->game.score;
-    GameAction action = game_click(&app->game, row, col);
+    TurnClickResult result;
+    turn_controller_click(&app->game, row, col, &result);
+    int old_score = result.score_before;
+    GameAction action = result.action;
     if (action == GAME_ACTION_INVALID) {
         play_tone(app, 140.0f, 60, 0.12f);
     } else if (action == GAME_ACTION_SELECTED) {
         play_tone(app, 300.0f, 40, 0.08f);
     } else if (action == GAME_ACTION_MOVED) {
-        start_turn_animation(app, before, selected_before, to_idx, path, path_len);
+        start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
         if (app->game.score > old_score) {
             play_tone(app, 920.0f, 180, 0.18f);
         } else {
             play_tone(app, 440.0f, 80, 0.10f);
         }
     } else if (action == GAME_ACTION_GAME_OVER) {
-        start_turn_animation(app, before, selected_before, to_idx, path, path_len);
+        start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
         play_tone(app, 200.0f, 260, 0.20f);
     }
 }

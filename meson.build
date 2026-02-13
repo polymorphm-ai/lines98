@@ -24,6 +24,7 @@ inc = include_directories('src')
 core_sources = [
   'src/game.c',
   'src/rng.c',
+  'src/turn_controller.c',
   'src/turn_anim.c',
 ]
 
@@ -61,6 +62,13 @@ turn_anim_exe = executable(
   c_args: strict_c_args,
 )
 
+turn_controller_exe = executable(
+  'lines98_turn_controller_tests',
+  ['tests/test_turn_controller.c'] + core_sources,
+  include_directories: inc,
+  c_args: strict_c_args,
+)
+
 test(
   'core-tests',
   test_exe,
@@ -80,6 +88,14 @@ test(
 test(
   'turn-anim-tests',
   turn_anim_exe,
+  env: [
+    'ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1',
+  ],
+)
+
+test(
+  'turn-controller-tests',
+  turn_controller_exe,
   env: [
     'ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1',
   ],
