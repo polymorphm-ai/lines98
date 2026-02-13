@@ -310,12 +310,20 @@ static void start_turn_animation(
 
     memcpy(app->render_board, app->game.board, sizeof(app->render_board));
 
+    bool moved_survived = false;
+    if (to_idx >= 0 && to_idx < GAME_CELLS && anim.move.color != 0) {
+        moved_survived = app->game.board[to_idx] == anim.move.color;
+    }
+
     for (int idx = 0; idx < GAME_CELLS; ++idx) {
         if (before[idx] != 0 && app->game.board[idx] == 0 && idx != from_idx) {
             anim.cleared_idx[anim.cleared_count] = idx;
             anim.cleared_color[anim.cleared_count] = before[idx];
             ++anim.cleared_count;
         } else if (before[idx] == 0 && app->game.board[idx] != 0) {
+            if (idx == to_idx && moved_survived) {
+                continue;
+            }
             anim.spawned_idx[anim.spawned_count] = idx;
             anim.spawned_color[anim.spawned_count] = app->game.board[idx];
             ++anim.spawned_count;
@@ -323,7 +331,7 @@ static void start_turn_animation(
         }
     }
 
-    if (to_idx >= 0 && to_idx < GAME_CELLS && before[to_idx] == 0 && app->game.board[to_idx] == 0 && anim.move.color != 0) {
+    if (to_idx >= 0 && to_idx < GAME_CELLS && anim.move.color != 0 && !moved_survived) {
         bool already_added = false;
         for (int i = 0; i < anim.cleared_count; ++i) {
             if (anim.cleared_idx[i] == to_idx) {
@@ -341,7 +349,7 @@ static void start_turn_animation(
     if (from_idx >= 0 && from_idx < GAME_CELLS) {
         app->render_board[from_idx] = 0;
     }
-    if (to_idx >= 0 && to_idx < GAME_CELLS) {
+    if (to_idx >= 0 && to_idx < GAME_CELLS && !moved_survived) {
         app->render_board[to_idx] = 0;
     }
 
