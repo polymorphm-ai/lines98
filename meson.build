@@ -32,7 +32,7 @@ if get_option('build_game')
 
   executable(
     'lines98',
-    ['src/main.c'] + core_sources,
+    ['src/main.c', 'src/fx_particles.c'] + core_sources,
     include_directories: inc,
     dependencies: [sdl2_dep, m_dep],
     c_args: strict_c_args,
