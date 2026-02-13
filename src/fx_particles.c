@@ -6,6 +6,10 @@
 #include <math.h>
 #include <stdlib.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /* Clamps color alpha/brightness mixing towards white. */
 static SDL_Color mix_white(SDL_Color c, float t) {
     if (t < 0.0f) {
