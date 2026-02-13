@@ -193,18 +193,18 @@ void audio_fx_play_line_clear(AudioFx *fx, int cleared_count) {
         cleared_count = 20;
     }
 
-    float bonus = (float)(cleared_count - 5) * 12.0f;
-    float root = 680.0f + bonus;
+    float bonus = (float)(cleared_count - 5) * 4.0f;
+    float root = 170.0f + bonus;
     float gain = 0.14f + (float)(cleared_count - 5) * 0.007f;
     if (gain > 0.24f) {
         gain = 0.24f;
     }
 
-    queue_noise_burst(fx, 70, 0.08f + (float)(cleared_count - 5) * 0.004f);
-    queue_note(fx, root, 70, gain * 0.9f, 6.0f, 0.04f);
-    queue_note(fx, root * 1.25f, 70, gain, 6.5f, 0.05f);
-    queue_note(fx, root * 1.5f, 94, gain * 0.95f, 7.0f, 0.05f);
-    queue_glide(fx, root * 1.8f, root * 2.2f, 120, gain * 0.82f, 8.0f, 0.07f);
+    queue_noise_burst(fx, 85, 0.09f + (float)(cleared_count - 5) * 0.004f);
+    queue_note(fx, root * 0.5f, 80, gain * 0.95f, 4.0f, 0.03f);
+    queue_note(fx, root, 95, gain, 4.5f, 0.04f);
+    queue_note(fx, root * 1.2f, 105, gain * 0.92f, 5.0f, 0.04f);
+    queue_glide(fx, root * 1.1f, root * 0.7f, 130, gain * 0.86f, 5.5f, 0.05f);
 }
 
 /* Plays restart cue. */
