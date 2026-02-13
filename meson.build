@@ -28,7 +28,20 @@ core_sources = [
 ]
 
 if get_option('build_game')
-  sdl2_dep = dependency('sdl2', required: true, fallback: ['sdl2', 'SDL2_dep'])
+  sdl2_dep = dependency(
+    'sdl2',
+    static: true,
+    required: false,
+    fallback: ['sdl2', 'SDL2_static_dep'],
+  )
+  if not sdl2_dep.found()
+    sdl2_dep = dependency(
+      'sdl2',
+      static: false,
+      required: true,
+      fallback: ['sdl2', 'SDL2_dep'],
+    )
+  endif
 
   executable(
     'lines98',
