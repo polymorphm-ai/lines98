@@ -159,6 +159,14 @@ static void draw_text(SDL_Renderer *renderer, int x, int y, int scale, const cha
     }
 }
 
+static int text_pixel_width(int scale, const char *text) {
+    int len = 0;
+    for (const char *p = text; *p != '\0'; ++p) {
+        ++len;
+    }
+    return len * 6 * scale;
+}
+
 static void draw_score(SDL_Renderer *renderer, int score) {
     if (score < 0) {
         score = 0;
@@ -330,14 +338,20 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
     SDL_RenderFillRect(renderer, &full);
 
     SDL_SetRenderDrawColor(renderer, 10, 16, 26, 220);
-    SDL_Rect panel = {150, 250, 460, 300};
+    SDL_Rect panel = {130, 250, 500, 300};
     SDL_RenderFillRect(renderer, &panel);
     SDL_SetRenderDrawColor(renderer, 80, 102, 130, 255);
     SDL_RenderDrawRect(renderer, &panel);
 
     set_color(renderer, TEXT);
-    draw_text(renderer, 210, 300, 8, "GAME OVER");
-    draw_text(renderer, 280, 390, 5, "SCORE");
+    const char *title = "GAME OVER";
+    const char *label = "SCORE";
+    int title_scale = 8;
+    int label_scale = 5;
+    int title_x = panel.x + (panel.w - text_pixel_width(title_scale, title)) / 2;
+    int label_x = panel.x + (panel.w - text_pixel_width(label_scale, label)) / 2;
+    draw_text(renderer, title_x, 300, title_scale, title);
+    draw_text(renderer, label_x, 390, label_scale, label);
 
     int score = game->score;
     if (score < 0) {
