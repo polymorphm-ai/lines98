@@ -359,6 +359,7 @@ static void start_turn_animation(
             anim.cleared_idx[anim.cleared_count] = to_idx;
             anim.cleared_color[anim.cleared_count] = anim.move.color;
             ++anim.cleared_count;
+            anim.after_clear_board[to_idx] = 0;
         }
     }
 
