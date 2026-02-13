@@ -95,6 +95,66 @@ static void draw_digit(SDL_Renderer *renderer, int x, int y, int scale, int digi
     draw_segment(renderer, x + t, y + lh + t, lw, t, segments[digit][6]);
 }
 
+static void draw_glyph(SDL_Renderer *renderer, int x, int y, int scale, char ch) {
+    static const uint8_t glyph_space[7] = {0, 0, 0, 0, 0, 0, 0};
+    static const uint8_t glyph_a[7] = {14, 17, 17, 31, 17, 17, 17};
+    static const uint8_t glyph_e[7] = {31, 16, 16, 30, 16, 16, 31};
+    static const uint8_t glyph_g[7] = {14, 17, 16, 23, 17, 17, 14};
+    static const uint8_t glyph_m[7] = {17, 27, 21, 21, 17, 17, 17};
+    static const uint8_t glyph_o[7] = {14, 17, 17, 17, 17, 17, 14};
+    static const uint8_t glyph_r[7] = {30, 17, 17, 30, 20, 18, 17};
+    static const uint8_t glyph_s[7] = {15, 16, 16, 14, 1, 1, 30};
+    static const uint8_t glyph_v[7] = {17, 17, 17, 17, 17, 10, 4};
+
+    const uint8_t *glyph = glyph_space;
+    switch (ch) {
+        case 'A':
+            glyph = glyph_a;
+            break;
+        case 'E':
+            glyph = glyph_e;
+            break;
+        case 'G':
+            glyph = glyph_g;
+            break;
+        case 'M':
+            glyph = glyph_m;
+            break;
+        case 'O':
+            glyph = glyph_o;
+            break;
+        case 'R':
+            glyph = glyph_r;
+            break;
+        case 'S':
+            glyph = glyph_s;
+            break;
+        case 'V':
+            glyph = glyph_v;
+            break;
+        default:
+            glyph = glyph_space;
+            break;
+    }
+
+    for (int row = 0; row < 7; ++row) {
+        for (int col = 0; col < 5; ++col) {
+            if ((glyph[row] >> (4 - col)) & 1u) {
+                SDL_Rect px = {x + col * scale, y + row * scale, scale, scale};
+                SDL_RenderFillRect(renderer, &px);
+            }
+        }
+    }
+}
+
+static void draw_text(SDL_Renderer *renderer, int x, int y, int scale, const char *text) {
+    int cursor = x;
+    for (const char *p = text; *p != '\0'; ++p) {
+        draw_glyph(renderer, cursor, y, scale, *p);
+        cursor += 6 * scale;
+    }
+}
+
 static void draw_score(SDL_Renderer *renderer, int score) {
     if (score < 0) {
         score = 0;
@@ -255,7 +315,7 @@ static void draw_board(SDL_Renderer *renderer, const Game *game) {
     }
 }
 
-static void draw_overlay(SDL_Renderer *renderer, bool visible) {
+static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible) {
     if (!visible) {
         return;
     }
@@ -266,10 +326,20 @@ static void draw_overlay(SDL_Renderer *renderer, bool visible) {
     SDL_RenderFillRect(renderer, &full);
 
     set_color(renderer, TEXT);
-    draw_digit(renderer, 270, 360, 3, 0);
-    draw_digit(renderer, 332, 360, 3, 0);
-    draw_digit(renderer, 394, 360, 3, 0);
-    draw_digit(renderer, 456, 360, 3, 0);
+    draw_text(renderer, 220, 300, 8, "GAME OVER");
+    draw_text(renderer, 290, 400, 5, "SCORE");
+
+    int score = game->score;
+    if (score < 0) {
+        score = 0;
+    }
+    if (score > 9999) {
+        score = 9999;
+    }
+    draw_digit(renderer, 270, 450, 3, (score / 1000) % 10);
+    draw_digit(renderer, 332, 450, 3, (score / 100) % 10);
+    draw_digit(renderer, 394, 450, 3, (score / 10) % 10);
+    draw_digit(renderer, 456, 450, 3, score % 10);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
@@ -331,7 +401,7 @@ int main(void) {
         draw_next_balls(app.renderer, &app.game);
         draw_score(app.renderer, app.game.score);
         draw_board(app.renderer, &app.game);
-        draw_overlay(app.renderer, app.game.game_over);
+        draw_overlay(app.renderer, &app.game, app.game.game_over);
 
         SDL_RenderPresent(app.renderer);
     }
