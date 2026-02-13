@@ -7,3 +7,7 @@
 *.so
 *.log
 *.exe
+
+# Meson fallback subproject artifacts generated during local builds.
+subprojects/SDL2/
+subprojects/.wraplock
