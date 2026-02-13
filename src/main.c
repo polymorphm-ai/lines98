@@ -21,6 +21,43 @@
 #define CELL_SIZE 64
 #define NEXT_OFFSET_X 92
 #define NEXT_OFFSET_Y 36
+#define MAX_PARTICLES 4096
+#define MAX_PATH_NODES GAME_CELLS
+
+typedef struct {
+    bool active;
+    int path[MAX_PATH_NODES];
+    int path_len;
+    uint8_t color;
+    float duration;
+} MoveAnim;
+
+typedef struct {
+    bool active;
+    float t;
+    float move_end;
+    float spawn_start;
+    float total;
+    bool burst_done;
+    MoveAnim move;
+    int cleared_idx[GAME_CELLS];
+    uint8_t cleared_color[GAME_CELLS];
+    int cleared_count;
+    int spawned_idx[GAME_CELLS];
+    uint8_t spawned_color[GAME_CELLS];
+    int spawned_count;
+} TurnAnim;
+
+typedef struct {
+    float x;
+    float y;
+    float vx;
+    float vy;
+    float radius;
+    float life;
+    SDL_Color color;
+    bool active;
+} Particle;
 
 typedef struct {
     SDL_Window *window;
@@ -29,6 +66,9 @@ typedef struct {
     SDL_AudioSpec audio_spec;
     bool audio_ready;
     Game game;
+    uint8_t render_board[GAME_CELLS];
+    TurnAnim turn_anim;
+    Particle particles[MAX_PARTICLES];
 } App;
 
 static const SDL_Color BG = {22, 26, 34, 255};
@@ -52,12 +92,436 @@ static void set_color(SDL_Renderer *renderer, SDL_Color color) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
 }
 
+static SDL_Color scale_color(SDL_Color c, float k) {
+    if (k < 0.0f) {
+        k = 0.0f;
+    }
+    SDL_Color out = c;
+    out.r = (uint8_t)SDL_min(255, (int)(c.r * k));
+    out.g = (uint8_t)SDL_min(255, (int)(c.g * k));
+    out.b = (uint8_t)SDL_min(255, (int)(c.b * k));
+    return out;
+}
+
+static SDL_Color mix_white(SDL_Color c, float t) {
+    if (t < 0.0f) {
+        t = 0.0f;
+    }
+    if (t > 1.0f) {
+        t = 1.0f;
+    }
+    SDL_Color out = c;
+    out.r = (uint8_t)(c.r + (255 - c.r) * t);
+    out.g = (uint8_t)(c.g + (255 - c.g) * t);
+    out.b = (uint8_t)(c.b + (255 - c.b) * t);
+    return out;
+}
+
 static void draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radius, SDL_Color color) {
     set_color(renderer, color);
     for (int y = -radius; y <= radius; ++y) {
         int span = (int)sqrt((double)(radius * radius - y * y));
         SDL_RenderDrawLine(renderer, cx - span, cy + y, cx + span, cy + y);
     }
+}
+
+static void draw_ball(SDL_Renderer *renderer, int cx, int cy, int radius, SDL_Color base) {
+    draw_filled_circle(renderer, cx + 2, cy + 3, radius, scale_color(base, 0.28f));
+    draw_filled_circle(renderer, cx, cy, radius, scale_color(base, 0.72f));
+    draw_filled_circle(renderer, cx - 1, cy - 1, (radius * 8) / 10, base);
+    draw_filled_circle(renderer, cx - 5, cy - 6, radius / 2, mix_white(base, 0.65f));
+    draw_filled_circle(renderer, cx - 8, cy - 9, SDL_max(2, radius / 6), mix_white(base, 0.9f));
+}
+
+static int ball_center_x(int col) {
+    return BOARD_OFFSET_X + col * CELL_SIZE + CELL_SIZE / 2;
+}
+
+static int ball_center_y(int row) {
+    return BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
+}
+
+static int rc_to_idx(int row, int col) {
+    return row * GAME_BOARD_SIZE + col;
+}
+
+static bool idx_to_rc(int idx, int *row, int *col) {
+    if (idx < 0 || idx >= GAME_CELLS) {
+        return false;
+    }
+    *row = idx / GAME_BOARD_SIZE;
+    *col = idx % GAME_BOARD_SIZE;
+    return true;
+}
+
+static bool in_bounds(int row, int col) {
+    return row >= 0 && row < GAME_BOARD_SIZE && col >= 0 && col < GAME_BOARD_SIZE;
+}
+
+static void sync_render_board(App *app) {
+    memcpy(app->render_board, app->game.board, sizeof(app->render_board));
+}
+
+static bool build_move_path(const uint8_t *board, int from_idx, int to_idx, int *path, int *path_len) {
+    if (from_idx < 0 || from_idx >= GAME_CELLS || to_idx < 0 || to_idx >= GAME_CELLS) {
+        return false;
+    }
+    if (from_idx == to_idx) {
+        path[0] = from_idx;
+        *path_len = 1;
+        return true;
+    }
+
+    int prev[GAME_CELLS];
+    for (int i = 0; i < GAME_CELLS; ++i) {
+        prev[i] = -1;
+    }
+
+    int queue[GAME_CELLS];
+    int head = 0;
+    int tail = 0;
+    queue[tail++] = from_idx;
+    prev[from_idx] = from_idx;
+
+    const int dr[4] = {-1, 1, 0, 0};
+    const int dc[4] = {0, 0, -1, 1};
+    bool found = false;
+
+    while (head < tail && !found) {
+        int cur = queue[head++];
+        int row;
+        int col;
+        (void)idx_to_rc(cur, &row, &col);
+        for (int k = 0; k < 4; ++k) {
+            int nr = row + dr[k];
+            int nc = col + dc[k];
+            if (!in_bounds(nr, nc)) {
+                continue;
+            }
+            int nxt = rc_to_idx(nr, nc);
+            if (prev[nxt] != -1) {
+                continue;
+            }
+            if (nxt != to_idx && board[nxt] != 0) {
+                continue;
+            }
+
+            prev[nxt] = cur;
+            if (nxt == to_idx) {
+                found = true;
+                break;
+            }
+            queue[tail++] = nxt;
+        }
+    }
+
+    if (!found) {
+        return false;
+    }
+
+    int rev[MAX_PATH_NODES];
+    int n = 0;
+    for (int cur = to_idx; cur != from_idx; cur = prev[cur]) {
+        rev[n++] = cur;
+    }
+    rev[n++] = from_idx;
+
+    for (int i = 0; i < n; ++i) {
+        path[i] = rev[n - 1 - i];
+    }
+    *path_len = n;
+    return true;
+}
+
+static void clear_turn_anim(App *app) {
+    memset(&app->turn_anim, 0, sizeof(app->turn_anim));
+}
+
+static void clear_particles(App *app) {
+    for (int i = 0; i < MAX_PARTICLES; ++i) {
+        app->particles[i].active = false;
+    }
+}
+
+static void spawn_particle(App *app, float x, float y, SDL_Color color) {
+    for (int i = 0; i < MAX_PARTICLES; ++i) {
+        if (!app->particles[i].active) {
+            float a = (float)rand() / (float)RAND_MAX * 2.0f * (float)M_PI;
+            float s = 70.0f + ((float)rand() / (float)RAND_MAX) * 240.0f;
+            float jx = (((float)rand() / (float)RAND_MAX) - 0.5f) * 10.0f;
+            float jy = (((float)rand() / (float)RAND_MAX) - 0.5f) * 10.0f;
+
+            app->particles[i].active = true;
+            app->particles[i].x = x + jx;
+            app->particles[i].y = y + jy;
+            app->particles[i].vx = cosf(a) * s;
+            app->particles[i].vy = sinf(a) * s - 30.0f;
+            app->particles[i].radius = 1.8f + ((float)rand() / (float)RAND_MAX) * 2.2f;
+            app->particles[i].life = 0.7f + ((float)rand() / (float)RAND_MAX) * 0.9f;
+            app->particles[i].color = mix_white(color, 0.25f);
+            return;
+        }
+    }
+}
+
+static void emit_clear_particles(App *app, const TurnAnim *anim) {
+    for (int i = 0; i < anim->cleared_count; ++i) {
+        int idx = anim->cleared_idx[i];
+        int row;
+        int col;
+        if (!idx_to_rc(idx, &row, &col)) {
+            continue;
+        }
+
+        float x = (float)ball_center_x(col);
+        float y = (float)ball_center_y(row);
+        SDL_Color color = BALL_COLORS[anim->cleared_color[i]];
+        for (int k = 0; k < 18; ++k) {
+            spawn_particle(app, x, y, color);
+        }
+    }
+}
+
+static void start_turn_animation(
+    App *app,
+    const uint8_t *before,
+    int from_idx,
+    int to_idx,
+    const int *path,
+    int path_len
+) {
+    TurnAnim anim;
+    memset(&anim, 0, sizeof(anim));
+
+    anim.active = true;
+    anim.t = 0.0f;
+    anim.move_end = 0.18f;
+    anim.spawn_start = 0.26f;
+    anim.total = 0.52f;
+    anim.burst_done = false;
+
+    anim.move.active = path_len >= 2;
+    anim.move.path_len = path_len;
+    anim.move.color = (from_idx >= 0 && from_idx < GAME_CELLS) ? before[from_idx] : 0;
+    anim.move.duration = anim.move_end;
+    if (anim.move.active) {
+        memcpy(anim.move.path, path, (size_t)path_len * sizeof(int));
+    }
+
+    memcpy(app->render_board, app->game.board, sizeof(app->render_board));
+
+    for (int idx = 0; idx < GAME_CELLS; ++idx) {
+        if (before[idx] != 0 && app->game.board[idx] == 0 && idx != from_idx) {
+            anim.cleared_idx[anim.cleared_count] = idx;
+            anim.cleared_color[anim.cleared_count] = before[idx];
+            ++anim.cleared_count;
+        } else if (before[idx] == 0 && app->game.board[idx] != 0) {
+            anim.spawned_idx[anim.spawned_count] = idx;
+            anim.spawned_color[anim.spawned_count] = app->game.board[idx];
+            ++anim.spawned_count;
+            app->render_board[idx] = 0;
+        }
+    }
+
+    if (to_idx >= 0 && to_idx < GAME_CELLS && before[to_idx] == 0 && app->game.board[to_idx] == 0 && anim.move.color != 0) {
+        bool already_added = false;
+        for (int i = 0; i < anim.cleared_count; ++i) {
+            if (anim.cleared_idx[i] == to_idx) {
+                already_added = true;
+                break;
+            }
+        }
+        if (!already_added) {
+            anim.cleared_idx[anim.cleared_count] = to_idx;
+            anim.cleared_color[anim.cleared_count] = anim.move.color;
+            ++anim.cleared_count;
+        }
+    }
+
+    if (from_idx >= 0 && from_idx < GAME_CELLS) {
+        app->render_board[from_idx] = 0;
+    }
+    if (to_idx >= 0 && to_idx < GAME_CELLS) {
+        app->render_board[to_idx] = 0;
+    }
+
+    app->turn_anim = anim;
+}
+
+static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
+    if (!anim->active || anim->t < anim->spawn_start) {
+        return 0.0f;
+    }
+    float k = (anim->t - anim->spawn_start) / 0.20f;
+    if (k > 1.0f) {
+        k = 1.0f;
+    }
+    if (k < 0.0f) {
+        k = 0.0f;
+    }
+    for (int i = 0; i < anim->spawned_count; ++i) {
+        if (anim->spawned_idx[i] == idx) {
+            return k;
+        }
+    }
+    return -1.0f;
+}
+
+static void update_turn_animation(App *app, float dt) {
+    TurnAnim *anim = &app->turn_anim;
+    if (!anim->active) {
+        return;
+    }
+
+    anim->t += dt;
+    if (!anim->burst_done && anim->t >= anim->move_end) {
+        emit_clear_particles(app, anim);
+        anim->burst_done = true;
+    }
+
+    if (anim->t >= anim->spawn_start) {
+        for (int i = 0; i < anim->spawned_count; ++i) {
+            int idx = anim->spawned_idx[i];
+            app->render_board[idx] = anim->spawned_color[i];
+        }
+    }
+
+    if (anim->t >= anim->total) {
+        clear_turn_anim(app);
+        sync_render_board(app);
+    }
+}
+
+static void update_particles(App *app, float dt) {
+    const float gravity = 560.0f;
+    const float bounce = 0.58f;
+    const int board_w = GAME_BOARD_SIZE * CELL_SIZE;
+    const int board_h = GAME_BOARD_SIZE * CELL_SIZE;
+    const float min_x = (float)BOARD_OFFSET_X;
+    const float max_x = (float)(BOARD_OFFSET_X + board_w);
+    const float min_y = (float)BOARD_OFFSET_Y;
+    const float max_y = (float)(BOARD_OFFSET_Y + board_h);
+
+    for (int i = 0; i < MAX_PARTICLES; ++i) {
+        Particle *p = &app->particles[i];
+        if (!p->active) {
+            continue;
+        }
+
+        p->life -= dt;
+        if (p->life <= 0.0f) {
+            p->active = false;
+            continue;
+        }
+
+        p->vy += gravity * dt;
+        p->x += p->vx * dt;
+        p->y += p->vy * dt;
+
+        if (p->x < min_x + p->radius) {
+            p->x = min_x + p->radius;
+            p->vx = -p->vx * bounce;
+        } else if (p->x > max_x - p->radius) {
+            p->x = max_x - p->radius;
+            p->vx = -p->vx * bounce;
+        }
+
+        if (p->y < min_y + p->radius) {
+            p->y = min_y + p->radius;
+            p->vy = -p->vy * bounce;
+        } else if (p->y > max_y - p->radius) {
+            p->y = max_y - p->radius;
+            p->vy = -p->vy * bounce;
+            p->vx *= 0.88f;
+        }
+
+        for (int row = 0; row < GAME_BOARD_SIZE; ++row) {
+            for (int col = 0; col < GAME_BOARD_SIZE; ++col) {
+                uint8_t cell = game_get_cell(&app->game, row, col);
+                if (cell == 0) {
+                    continue;
+                }
+
+                float ox = (float)ball_center_x(col);
+                float oy = (float)ball_center_y(row);
+                float dx = p->x - ox;
+                float dy = p->y - oy;
+                float min_dist = p->radius + 23.0f;
+                float d2 = dx * dx + dy * dy;
+                if (d2 >= min_dist * min_dist) {
+                    continue;
+                }
+
+                float d = sqrtf(SDL_max(d2, 0.0001f));
+                float nx = dx / d;
+                float ny = dy / d;
+                p->x = ox + nx * min_dist;
+                p->y = oy + ny * min_dist;
+
+                float vn = p->vx * nx + p->vy * ny;
+                if (vn < 0.0f) {
+                    p->vx -= (1.0f + bounce) * vn * nx;
+                    p->vy -= (1.0f + bounce) * vn * ny;
+                    p->vx *= 0.94f;
+                    p->vy *= 0.94f;
+                }
+            }
+        }
+    }
+}
+
+static void draw_particles(SDL_Renderer *renderer, const App *app) {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    for (int i = 0; i < MAX_PARTICLES; ++i) {
+        const Particle *p = &app->particles[i];
+        if (!p->active) {
+            continue;
+        }
+        SDL_Color c = p->color;
+        c.a = (uint8_t)SDL_min(255, (int)(255.0f * SDL_min(1.0f, p->life)));
+        draw_filled_circle(renderer, (int)p->x, (int)p->y, (int)p->radius, c);
+    }
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+}
+
+static void draw_move_animation(SDL_Renderer *renderer, const App *app) {
+    const TurnAnim *anim = &app->turn_anim;
+    if (!anim->active || !anim->move.active || anim->move.color == 0 || anim->move.path_len < 2) {
+        return;
+    }
+
+    float u = (anim->t / anim->move.duration) * (float)(anim->move.path_len - 1);
+    if (u < 0.0f) {
+        u = 0.0f;
+    }
+    if (u > (float)(anim->move.path_len - 1)) {
+        u = (float)(anim->move.path_len - 1);
+    }
+
+    int seg = (int)u;
+    if (seg >= anim->move.path_len - 1) {
+        seg = anim->move.path_len - 2;
+        u = (float)(anim->move.path_len - 1);
+    }
+
+    float frac = u - (float)seg;
+    int idx0 = anim->move.path[seg];
+    int idx1 = anim->move.path[seg + 1];
+    int r0;
+    int c0;
+    int r1;
+    int c1;
+    if (!idx_to_rc(idx0, &r0, &c0) || !idx_to_rc(idx1, &r1, &c1)) {
+        return;
+    }
+
+    float x0 = (float)ball_center_x(c0);
+    float y0 = (float)ball_center_y(r0);
+    float x1 = (float)ball_center_x(c1);
+    float y1 = (float)ball_center_y(r1);
+    int cx = (int)(x0 + (x1 - x0) * frac);
+    int cy = (int)(y0 + (y1 - y0) * frac);
+    draw_ball(renderer, cx, cy, 23, BALL_COLORS[anim->move.color]);
 }
 
 static void draw_segment(SDL_Renderer *renderer, int x, int y, int w, int h, bool on) {
@@ -216,6 +680,7 @@ static void play_tone(App *app, float frequency, int duration_ms, float gain) {
 
 static bool app_init(App *app) {
     memset(app, 0, sizeof(*app));
+    srand((unsigned int)time(NULL));
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -256,6 +721,9 @@ static bool app_init(App *app) {
     }
 
     game_init(&app->game, (uint32_t)time(NULL));
+    sync_render_board(app);
+    clear_turn_anim(app);
+    clear_particles(app);
     return true;
 }
 
@@ -283,11 +751,11 @@ static void draw_next_balls(SDL_Renderer *renderer, const Game *game) {
     for (int i = 0; i < GAME_NEXT_COUNT; ++i) {
         int x = NEXT_OFFSET_X + i * 56;
         int y = NEXT_OFFSET_Y;
-        draw_filled_circle(renderer, x, y, 18, BALL_COLORS[game->next_colors[i]]);
+        draw_ball(renderer, x, y, 18, BALL_COLORS[game->next_colors[i]]);
     }
 }
 
-static void draw_board(SDL_Renderer *renderer, const Game *game) {
+static void draw_board(SDL_Renderer *renderer, const App *app) {
     SDL_Rect board_rect = {BOARD_OFFSET_X, BOARD_OFFSET_Y, GAME_BOARD_SIZE * CELL_SIZE, GAME_BOARD_SIZE * CELL_SIZE};
     set_color(renderer, GRID_BG);
     SDL_RenderFillRect(renderer, &board_rect);
@@ -302,21 +770,29 @@ static void draw_board(SDL_Renderer *renderer, const Game *game) {
 
     int sel_row = -1;
     int sel_col = -1;
-    if (game->selected_index >= 0) {
-        sel_row = game->selected_index / GAME_BOARD_SIZE;
-        sel_col = game->selected_index % GAME_BOARD_SIZE;
+    if (!app->turn_anim.active && app->game.selected_index >= 0) {
+        sel_row = app->game.selected_index / GAME_BOARD_SIZE;
+        sel_col = app->game.selected_index % GAME_BOARD_SIZE;
     }
 
     for (int row = 0; row < GAME_BOARD_SIZE; ++row) {
         for (int col = 0; col < GAME_BOARD_SIZE; ++col) {
-            uint8_t cell = game_get_cell(game, row, col);
+            int idx = rc_to_idx(row, col);
+            uint8_t cell = app->turn_anim.active ? app->render_board[idx] : app->game.board[idx];
             if (cell == 0) {
                 continue;
             }
 
-            int cx = BOARD_OFFSET_X + col * CELL_SIZE + CELL_SIZE / 2;
-            int cy = BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
-            draw_filled_circle(renderer, cx, cy, 23, BALL_COLORS[cell]);
+            int cx = ball_center_x(col);
+            int cy = ball_center_y(row);
+            int radius = 23;
+            if (app->turn_anim.active) {
+                float s = spawned_scale_for_index(&app->turn_anim, idx);
+                if (s >= 0.0f) {
+                    radius = (int)(2.0f + 21.0f * s);
+                }
+            }
+            draw_ball(renderer, cx, cy, radius, BALL_COLORS[cell]);
 
             if (row == sel_row && col == sel_col) {
                 set_color(renderer, SELECTED);
@@ -369,10 +845,17 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
 }
 
 static void handle_click(App *app, int x, int y) {
+    if (app->turn_anim.active) {
+        return;
+    }
+
     if (app->game.game_over) {
         (void)x;
         (void)y;
         game_init(&app->game, (uint32_t)time(NULL));
+        sync_render_board(app);
+        clear_turn_anim(app);
+        clear_particles(app);
         play_tone(app, 640.0f, 100, 0.18f);
         return;
     }
@@ -389,6 +872,15 @@ static void handle_click(App *app, int x, int y) {
         return;
     }
 
+    uint8_t before[GAME_CELLS];
+    memcpy(before, app->game.board, sizeof(before));
+    int selected_before = app->game.selected_index;
+    int to_idx = rc_to_idx(row, col);
+    int path[MAX_PATH_NODES];
+    int path_len = 0;
+    if (selected_before >= 0 && selected_before < GAME_CELLS && before[to_idx] == 0) {
+        (void)build_move_path(before, selected_before, to_idx, path, &path_len);
+    }
     int old_score = app->game.score;
     GameAction action = game_click(&app->game, row, col);
     if (action == GAME_ACTION_INVALID) {
@@ -396,12 +888,14 @@ static void handle_click(App *app, int x, int y) {
     } else if (action == GAME_ACTION_SELECTED) {
         play_tone(app, 300.0f, 40, 0.08f);
     } else if (action == GAME_ACTION_MOVED) {
+        start_turn_animation(app, before, selected_before, to_idx, path, path_len);
         if (app->game.score > old_score) {
             play_tone(app, 920.0f, 180, 0.18f);
         } else {
             play_tone(app, 440.0f, 80, 0.10f);
         }
     } else if (action == GAME_ACTION_GAME_OVER) {
+        start_turn_animation(app, before, selected_before, to_idx, path, path_len);
         play_tone(app, 200.0f, 260, 0.20f);
     }
 }
@@ -414,7 +908,15 @@ int main(void) {
     }
 
     bool running = true;
+    uint32_t prev_ticks = SDL_GetTicks();
     while (running) {
+        uint32_t now = SDL_GetTicks();
+        float dt = (float)(now - prev_ticks) / 1000.0f;
+        if (dt > 0.033f) {
+            dt = 0.033f;
+        }
+        prev_ticks = now;
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -423,17 +925,24 @@ int main(void) {
                 handle_click(&app, event.button.x, event.button.y);
             } else if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_r) {
                 game_init(&app.game, (uint32_t)time(NULL));
+                sync_render_board(&app);
+                clear_turn_anim(&app);
+                clear_particles(&app);
                 play_tone(&app, 640.0f, 100, 0.18f);
             }
         }
+        update_turn_animation(&app, dt);
+        update_particles(&app, dt);
 
         set_color(app.renderer, BG);
         SDL_RenderClear(app.renderer);
 
         draw_next_balls(app.renderer, &app.game);
         draw_score(app.renderer, app.game.score);
-        draw_board(app.renderer, &app.game);
-        draw_overlay(app.renderer, &app.game, app.game.game_over);
+        draw_board(app.renderer, &app);
+        draw_move_animation(app.renderer, &app);
+        draw_particles(app.renderer, &app);
+        draw_overlay(app.renderer, &app.game, app.game.game_over && !app.turn_anim.active);
 
         SDL_RenderPresent(app.renderer);
     }
