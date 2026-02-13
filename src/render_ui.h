@@ -1,7 +1,7 @@
 #ifndef RENDER_UI_H
 #define RENDER_UI_H
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 /* Sets current renderer draw color. */
 void ru_set_color(SDL_Renderer *renderer, SDL_Color color);

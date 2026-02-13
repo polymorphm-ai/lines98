@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#include <SDL2/SDL.h>
+#include <SDL.h>
 
 /* Small owner struct for SDL audio device and obtained format. */
 typedef struct {
