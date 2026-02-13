@@ -355,6 +355,14 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
 }
 
 static void handle_click(App *app, int x, int y) {
+    if (app->game.game_over) {
+        (void)x;
+        (void)y;
+        game_init(&app->game, (uint32_t)time(NULL));
+        play_tone(app, 640.0f, 100, 0.18f);
+        return;
+    }
+
     int board_x = x - BOARD_OFFSET_X;
     int board_y = y - BOARD_OFFSET_Y;
     if (board_x < 0 || board_y < 0) {
