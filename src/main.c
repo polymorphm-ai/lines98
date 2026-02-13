@@ -29,16 +29,22 @@ typedef struct {
     int path[MAX_PATH_NODES];
     int path_len;
     uint8_t color;
-    float duration;
 } MoveAnim;
+
+typedef enum {
+    TURN_PHASE_NONE = 0,
+    TURN_PHASE_MOVE = 1,
+    TURN_PHASE_CLEAR = 2,
+    TURN_PHASE_SPAWN = 3
+} TurnPhase;
 
 typedef struct {
     bool active;
-    float t;
-    float move_end;
-    float spawn_start;
-    float total;
-    bool burst_done;
+    TurnPhase phase;
+    float phase_t;
+    float move_dur;
+    float clear_dur;
+    float spawn_dur;
     MoveAnim move;
     int cleared_idx[GAME_CELLS];
     uint8_t cleared_color[GAME_CELLS];
@@ -46,6 +52,10 @@ typedef struct {
     int spawned_idx[GAME_CELLS];
     uint8_t spawned_color[GAME_CELLS];
     int spawned_count;
+    uint8_t before_board[GAME_CELLS];
+    uint8_t after_move_board[GAME_CELLS];
+    uint8_t after_clear_board[GAME_CELLS];
+    uint8_t final_board[GAME_CELLS];
 } TurnAnim;
 
 typedef struct {
@@ -294,21 +304,27 @@ static void start_turn_animation(
     memset(&anim, 0, sizeof(anim));
 
     anim.active = true;
-    anim.t = 0.0f;
-    anim.move_end = 0.18f;
-    anim.spawn_start = 0.26f;
-    anim.total = 0.52f;
-    anim.burst_done = false;
+    anim.phase = TURN_PHASE_MOVE;
+    anim.phase_t = 0.0f;
+    anim.move_dur = 0.18f;
+    anim.clear_dur = 0.16f;
+    anim.spawn_dur = 0.18f;
 
     anim.move.active = path_len >= 2;
     anim.move.path_len = path_len;
     anim.move.color = (from_idx >= 0 && from_idx < GAME_CELLS) ? before[from_idx] : 0;
-    anim.move.duration = anim.move_end;
     if (anim.move.active) {
         memcpy(anim.move.path, path, (size_t)path_len * sizeof(int));
     }
 
-    memcpy(app->render_board, app->game.board, sizeof(app->render_board));
+    memcpy(anim.before_board, before, sizeof(anim.before_board));
+    memcpy(anim.final_board, app->game.board, sizeof(anim.final_board));
+    memcpy(anim.after_move_board, before, sizeof(anim.after_move_board));
+    if (from_idx >= 0 && from_idx < GAME_CELLS && to_idx >= 0 && to_idx < GAME_CELLS) {
+        anim.after_move_board[to_idx] = anim.after_move_board[from_idx];
+        anim.after_move_board[from_idx] = 0;
+    }
+    memcpy(anim.after_clear_board, anim.after_move_board, sizeof(anim.after_clear_board));
 
     bool moved_survived = false;
     if (to_idx >= 0 && to_idx < GAME_CELLS && anim.move.color != 0) {
@@ -320,6 +336,7 @@ static void start_turn_animation(
             anim.cleared_idx[anim.cleared_count] = idx;
             anim.cleared_color[anim.cleared_count] = before[idx];
             ++anim.cleared_count;
+            anim.after_clear_board[idx] = 0;
         } else if (before[idx] == 0 && app->game.board[idx] != 0) {
             if (idx == to_idx && moved_survived) {
                 continue;
@@ -327,7 +344,6 @@ static void start_turn_animation(
             anim.spawned_idx[anim.spawned_count] = idx;
             anim.spawned_color[anim.spawned_count] = app->game.board[idx];
             ++anim.spawned_count;
-            app->render_board[idx] = 0;
         }
     }
 
@@ -353,11 +369,16 @@ static void start_turn_animation(
         app->render_board[to_idx] = 0;
     }
 
+    memcpy(app->render_board, anim.before_board, sizeof(app->render_board));
+    if (from_idx >= 0 && from_idx < GAME_CELLS) {
+        app->render_board[from_idx] = 0;
+    }
+
     app->turn_anim = anim;
 }
 
 static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
-    if (!anim->active) {
+    if (!anim->active || anim->phase != TURN_PHASE_SPAWN) {
         return -1.0f;
     }
 
@@ -372,11 +393,7 @@ static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
         return -1.0f;
     }
 
-    if (anim->t < anim->spawn_start) {
-        return 0.0f;
-    }
-
-    float k = (anim->t - anim->spawn_start) / 0.20f;
+    float k = anim->phase_t / anim->spawn_dur;
     if (k > 1.0f) {
         k = 1.0f;
     }
@@ -392,22 +409,44 @@ static void update_turn_animation(App *app, float dt) {
         return;
     }
 
-    anim->t += dt;
-    if (!anim->burst_done && anim->t >= anim->move_end) {
-        emit_clear_particles(app, anim);
-        anim->burst_done = true;
+    anim->phase_t += dt;
+
+    if (anim->phase == TURN_PHASE_MOVE) {
+        if (anim->phase_t >= anim->move_dur) {
+            anim->phase = TURN_PHASE_CLEAR;
+            anim->phase_t = 0.0f;
+            memcpy(app->render_board, anim->after_move_board, sizeof(app->render_board));
+            emit_clear_particles(app, anim);
+            memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
+            if (anim->cleared_count == 0) {
+                anim->phase = TURN_PHASE_SPAWN;
+                anim->phase_t = 0.0f;
+                memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
+            }
+        }
+        return;
     }
 
-    if (anim->t >= anim->spawn_start) {
+    if (anim->phase == TURN_PHASE_CLEAR) {
+        if (anim->phase_t >= anim->clear_dur) {
+            anim->phase = TURN_PHASE_SPAWN;
+            anim->phase_t = 0.0f;
+            memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
+        }
+        return;
+    }
+
+    if (anim->phase == TURN_PHASE_SPAWN) {
+        memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
         for (int i = 0; i < anim->spawned_count; ++i) {
             int idx = anim->spawned_idx[i];
             app->render_board[idx] = anim->spawned_color[i];
         }
-    }
-
-    if (anim->t >= anim->total) {
-        clear_turn_anim(app);
-        sync_render_board(app);
+        if (anim->phase_t >= anim->spawn_dur) {
+            memcpy(app->render_board, anim->final_board, sizeof(app->render_board));
+            clear_turn_anim(app);
+        }
+        return;
     }
 }
 
@@ -456,7 +495,7 @@ static void update_particles(App *app, float dt) {
 
         for (int row = 0; row < GAME_BOARD_SIZE; ++row) {
             for (int col = 0; col < GAME_BOARD_SIZE; ++col) {
-                uint8_t cell = game_get_cell(&app->game, row, col);
+                uint8_t cell = app->render_board[rc_to_idx(row, col)];
                 if (cell == 0) {
                     continue;
                 }
@@ -505,14 +544,11 @@ static void draw_particles(SDL_Renderer *renderer, const App *app) {
 
 static void draw_move_animation(SDL_Renderer *renderer, const App *app) {
     const TurnAnim *anim = &app->turn_anim;
-    if (!anim->active || !anim->move.active || anim->move.color == 0 || anim->move.path_len < 2) {
-        return;
-    }
-    if (anim->t >= anim->move.duration) {
+    if (!anim->active || anim->phase != TURN_PHASE_MOVE || !anim->move.active || anim->move.color == 0 || anim->move.path_len < 2) {
         return;
     }
 
-    float u = (anim->t / anim->move.duration) * (float)(anim->move.path_len - 1);
+    float u = (anim->phase_t / anim->move_dur) * (float)(anim->move.path_len - 1);
     if (u < 0.0f) {
         u = 0.0f;
     }
