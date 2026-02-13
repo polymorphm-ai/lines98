@@ -62,20 +62,13 @@ static int run_single_game(uint32_t seed, int move_limit) {
                         CHECK(a == GAME_ACTION_SELECTED);
 
                         int score_before = game.score;
-                        int empty_before = game_empty_count(&game);
 
                         a = game_click(&game, tr, tc);
                         CHECK(a == GAME_ACTION_MOVED || a == GAME_ACTION_GAME_OVER);
 
                         int empty_after = game_empty_count(&game);
-                        int score_after = game.score;
-                        int cleared = score_after - score_before;
                         CHECK(empty_after >= 0 && empty_after <= GAME_CELLS);
-                        CHECK(cleared >= 0);
-
-                        /* Net empty cells = empty_before + cleared - spawned, where spawned is 0..3. */
-                        CHECK(empty_after <= empty_before + cleared);
-                        CHECK(empty_after >= empty_before + cleared - 3);
+                        CHECK(game.score >= score_before);
 
                         moved = true;
                         ++moves_done;

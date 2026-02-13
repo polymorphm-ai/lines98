@@ -115,8 +115,12 @@ static int clear_lines(Game *game) {
         }
     }
 
-    if (cleared > 0) {
-        game->score += cleared;
+    if (cleared >= 5) {
+        /* Canonical Lines-98 progression:
+           5->10, 6->12, 7->18, 8->28, 9->42.
+           It continues naturally as score = 2 * (n - 5)^2 + 10. */
+        int d = cleared - 5;
+        game->score += 2 * d * d + 10;
     }
     return cleared;
 }

@@ -69,7 +69,7 @@ static int test_line_clear_after_move(void) {
     for (int c = 0; c < 5; ++c) {
         CHECK(game.board[1 * GAME_BOARD_SIZE + c] == 0);
     }
-    CHECK(game.score == 5);
+    CHECK(game.score == 10);
     CHECK(game_empty_count(&game) == GAME_CELLS);
 
     return 0;
