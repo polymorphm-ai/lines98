@@ -16,7 +16,6 @@ strict_c_args = cc.get_supported_arguments([
   '-Wall',
   '-Wextra',
   '-Wpedantic',
-  '-Werror',
 ])
 
 inc = include_directories('src')

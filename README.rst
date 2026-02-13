@@ -29,6 +29,16 @@ Build commands::
    meson setup build --wrap-mode=forcefallback
    meson compile -C build
 
+Release build (optimized)::
+
+   meson setup build-release --wrap-mode=forcefallback --buildtype=release
+   meson compile -C build-release
+
+Optional strict warnings mode (treat warnings as errors)::
+
+   meson setup build-strict --wrap-mode=forcefallback -Dwerror=true
+   meson compile -C build-strict
+
 Run
 ---
 
