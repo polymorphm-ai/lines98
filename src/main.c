@@ -98,6 +98,7 @@ static void draw_digit(SDL_Renderer *renderer, int x, int y, int scale, int digi
 static void draw_glyph(SDL_Renderer *renderer, int x, int y, int scale, char ch) {
     static const uint8_t glyph_space[7] = {0, 0, 0, 0, 0, 0, 0};
     static const uint8_t glyph_a[7] = {14, 17, 17, 31, 17, 17, 17};
+    static const uint8_t glyph_c[7] = {14, 17, 16, 16, 16, 17, 14};
     static const uint8_t glyph_e[7] = {31, 16, 16, 30, 16, 16, 31};
     static const uint8_t glyph_g[7] = {14, 17, 16, 23, 17, 17, 14};
     static const uint8_t glyph_m[7] = {17, 27, 21, 21, 17, 17, 17};
@@ -110,6 +111,9 @@ static void draw_glyph(SDL_Renderer *renderer, int x, int y, int scale, char ch)
     switch (ch) {
         case 'A':
             glyph = glyph_a;
+            break;
+        case 'C':
+            glyph = glyph_c;
             break;
         case 'E':
             glyph = glyph_e;
@@ -325,9 +329,15 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
     SDL_Rect full = {0, 0, WINDOW_WIDTH, WINDOW_HEIGHT};
     SDL_RenderFillRect(renderer, &full);
 
+    SDL_SetRenderDrawColor(renderer, 10, 16, 26, 220);
+    SDL_Rect panel = {150, 250, 460, 300};
+    SDL_RenderFillRect(renderer, &panel);
+    SDL_SetRenderDrawColor(renderer, 80, 102, 130, 255);
+    SDL_RenderDrawRect(renderer, &panel);
+
     set_color(renderer, TEXT);
-    draw_text(renderer, 220, 300, 8, "GAME OVER");
-    draw_text(renderer, 290, 400, 5, "SCORE");
+    draw_text(renderer, 210, 300, 8, "GAME OVER");
+    draw_text(renderer, 280, 390, 5, "SCORE");
 
     int score = game->score;
     if (score < 0) {
@@ -336,10 +346,10 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
     if (score > 9999) {
         score = 9999;
     }
-    draw_digit(renderer, 270, 450, 3, (score / 1000) % 10);
-    draw_digit(renderer, 332, 450, 3, (score / 100) % 10);
-    draw_digit(renderer, 394, 450, 3, (score / 10) % 10);
-    draw_digit(renderer, 456, 450, 3, score % 10);
+    draw_digit(renderer, 270, 440, 3, (score / 1000) % 10);
+    draw_digit(renderer, 332, 440, 3, (score / 100) % 10);
+    draw_digit(renderer, 394, 440, 3, (score / 10) % 10);
+    draw_digit(renderer, 456, 440, 3, score % 10);
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
