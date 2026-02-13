@@ -85,4 +85,4 @@ Valgrind (separate build, no sanitizers):
 
 Do not mix ASan/UBSan with Valgrind in the same build. Valgrind may also
 require glibc debug symbols on some Linux distributions (for example
-``glibc-debug`` on Arch or ``libc6-dbg`` on Debian/Ubuntu).
+``debuginfod`` on Arch Linux or ``libc6-dbg`` on Debian/Ubuntu).
