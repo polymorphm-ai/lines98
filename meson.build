@@ -24,6 +24,7 @@ inc = include_directories('src')
 core_sources = [
   'src/game.c',
   'src/rng.c',
+  'src/turn_anim.c',
 ]
 
 if get_option('build_game')
@@ -53,6 +54,13 @@ stress_exe = executable(
   c_args: strict_c_args,
 )
 
+turn_anim_exe = executable(
+  'lines98_turn_anim_tests',
+  ['tests/test_turn_anim.c'] + core_sources,
+  include_directories: inc,
+  c_args: strict_c_args,
+)
+
 test(
   'core-tests',
   test_exe,
@@ -64,6 +72,14 @@ test(
 test(
   'core-stress-tests',
   stress_exe,
+  env: [
+    'ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1',
+  ],
+)
+
+test(
+  'turn-anim-tests',
+  turn_anim_exe,
   env: [
     'ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1',
   ],

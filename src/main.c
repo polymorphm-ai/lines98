@@ -1,3 +1,6 @@
+/* SDL frontend for Lines-98.
+   It owns rendering, audio, input handling and visual turn effects. */
+
 #include <SDL.h>
 
 #include <math.h>
@@ -9,6 +12,7 @@
 #include <time.h>
 
 #include "game.h"
+#include "turn_anim.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -22,41 +26,6 @@
 #define NEXT_OFFSET_X 92
 #define NEXT_OFFSET_Y 36
 #define MAX_PARTICLES 4096
-#define MAX_PATH_NODES GAME_CELLS
-
-typedef struct {
-    bool active;
-    int path[MAX_PATH_NODES];
-    int path_len;
-    uint8_t color;
-} MoveAnim;
-
-typedef enum {
-    TURN_PHASE_NONE = 0,
-    TURN_PHASE_MOVE = 1,
-    TURN_PHASE_CLEAR = 2,
-    TURN_PHASE_SPAWN = 3
-} TurnPhase;
-
-typedef struct {
-    bool active;
-    TurnPhase phase;
-    float phase_t;
-    float move_dur;
-    float clear_dur;
-    float spawn_dur;
-    MoveAnim move;
-    int cleared_idx[GAME_CELLS];
-    uint8_t cleared_color[GAME_CELLS];
-    int cleared_count;
-    int spawned_idx[GAME_CELLS];
-    uint8_t spawned_color[GAME_CELLS];
-    int spawned_count;
-    uint8_t before_board[GAME_CELLS];
-    uint8_t after_move_board[GAME_CELLS];
-    uint8_t after_clear_board[GAME_CELLS];
-    uint8_t final_board[GAME_CELLS];
-} TurnAnim;
 
 typedef struct {
     float x;
@@ -98,10 +67,12 @@ static const SDL_Color BALL_COLORS[GAME_COLORS + 1] = {
     {181, 106, 214, 255}
 };
 
+/* Sets current renderer draw color. */
 static void set_color(SDL_Renderer *renderer, SDL_Color color) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
 }
 
+/* Scales RGB channels by scalar factor. */
 static SDL_Color scale_color(SDL_Color c, float k) {
     if (k < 0.0f) {
         k = 0.0f;
@@ -113,6 +84,7 @@ static SDL_Color scale_color(SDL_Color c, float k) {
     return out;
 }
 
+/* Blends base color towards white by t in [0..1]. */
 static SDL_Color mix_white(SDL_Color c, float t) {
     if (t < 0.0f) {
         t = 0.0f;
@@ -127,6 +99,7 @@ static SDL_Color mix_white(SDL_Color c, float t) {
     return out;
 }
 
+/* Draws a solid filled circle using scanlines. */
 static void draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radius, SDL_Color color) {
     set_color(renderer, color);
     for (int y = -radius; y <= radius; ++y) {
@@ -135,6 +108,7 @@ static void draw_filled_circle(SDL_Renderer *renderer, int cx, int cy, int radiu
     }
 }
 
+/* Draws a pseudo-3D ball with shadow and highlights. */
 static void draw_ball(SDL_Renderer *renderer, int cx, int cy, int radius, SDL_Color base) {
     draw_filled_circle(renderer, cx + 2, cy + 3, radius, scale_color(base, 0.28f));
     draw_filled_circle(renderer, cx, cy, radius, scale_color(base, 0.72f));
@@ -143,18 +117,22 @@ static void draw_ball(SDL_Renderer *renderer, int cx, int cy, int radius, SDL_Co
     draw_filled_circle(renderer, cx - 8, cy - 9, SDL_max(2, radius / 6), mix_white(base, 0.9f));
 }
 
+/* Returns pixel X coordinate of board cell center. */
 static int ball_center_x(int col) {
     return BOARD_OFFSET_X + col * CELL_SIZE + CELL_SIZE / 2;
 }
 
+/* Returns pixel Y coordinate of board cell center. */
 static int ball_center_y(int row) {
     return BOARD_OFFSET_Y + row * CELL_SIZE + CELL_SIZE / 2;
 }
 
+/* Converts board row/col to linear index. */
 static int rc_to_idx(int row, int col) {
     return row * GAME_BOARD_SIZE + col;
 }
 
+/* Converts linear index to board row/col. */
 static bool idx_to_rc(int idx, int *row, int *col) {
     if (idx < 0 || idx >= GAME_CELLS) {
         return false;
@@ -164,14 +142,17 @@ static bool idx_to_rc(int idx, int *row, int *col) {
     return true;
 }
 
+/* Checks whether row/col lies inside board bounds. */
 static bool in_bounds(int row, int col) {
     return row >= 0 && row < GAME_BOARD_SIZE && col >= 0 && col < GAME_BOARD_SIZE;
 }
 
+/* Copies authoritative game board into render board. */
 static void sync_render_board(App *app) {
     memcpy(app->render_board, app->game.board, sizeof(app->render_board));
 }
 
+/* Rebuilds shortest path for move animation on a board snapshot. */
 static bool build_move_path(const uint8_t *board, int from_idx, int to_idx, int *path, int *path_len) {
     if (from_idx < 0 || from_idx >= GAME_CELLS || to_idx < 0 || to_idx >= GAME_CELLS) {
         return false;
@@ -229,7 +210,7 @@ static bool build_move_path(const uint8_t *board, int from_idx, int to_idx, int 
         return false;
     }
 
-    int rev[MAX_PATH_NODES];
+    int rev[TA_MAX_PATH_NODES];
     int n = 0;
     for (int cur = to_idx; cur != from_idx; cur = prev[cur]) {
         rev[n++] = cur;
@@ -243,16 +224,19 @@ static bool build_move_path(const uint8_t *board, int from_idx, int to_idx, int 
     return true;
 }
 
+/* Resets turn animation state to idle. */
 static void clear_turn_anim(App *app) {
-    memset(&app->turn_anim, 0, sizeof(app->turn_anim));
+    turn_anim_init(&app->turn_anim);
 }
 
+/* Clears all active dust particles. */
 static void clear_particles(App *app) {
     for (int i = 0; i < MAX_PARTICLES; ++i) {
         app->particles[i].active = false;
     }
 }
 
+/* Spawns one dust particle with random direction/energy. */
 static void spawn_particle(App *app, float x, float y, SDL_Color color) {
     for (int i = 0; i < MAX_PARTICLES; ++i) {
         if (!app->particles[i].active) {
@@ -274,6 +258,7 @@ static void spawn_particle(App *app, float x, float y, SDL_Color color) {
     }
 }
 
+/* Emits dust burst for all cleared balls in current turn animation. */
 static void emit_clear_particles(App *app, const TurnAnim *anim) {
     for (int i = 0; i < anim->cleared_count; ++i) {
         int idx = anim->cleared_idx[i];
@@ -292,6 +277,7 @@ static void emit_clear_particles(App *app, const TurnAnim *anim) {
     }
 }
 
+/* Starts queued turn animation from pre/post board snapshots. */
 static void start_turn_animation(
     App *app,
     const uint8_t *before,
@@ -300,157 +286,25 @@ static void start_turn_animation(
     const int *path,
     int path_len
 ) {
-    TurnAnim anim;
-    memset(&anim, 0, sizeof(anim));
-
-    anim.active = true;
-    anim.phase = TURN_PHASE_MOVE;
-    anim.phase_t = 0.0f;
-    anim.move_dur = 0.18f;
-    anim.clear_dur = 0.16f;
-    anim.spawn_dur = 0.18f;
-
-    anim.move.active = path_len >= 2;
-    anim.move.path_len = path_len;
-    anim.move.color = (from_idx >= 0 && from_idx < GAME_CELLS) ? before[from_idx] : 0;
-    if (anim.move.active) {
-        memcpy(anim.move.path, path, (size_t)path_len * sizeof(int));
-    }
-
-    memcpy(anim.before_board, before, sizeof(anim.before_board));
-    memcpy(anim.final_board, app->game.board, sizeof(anim.final_board));
-    memcpy(anim.after_move_board, before, sizeof(anim.after_move_board));
-    if (from_idx >= 0 && from_idx < GAME_CELLS && to_idx >= 0 && to_idx < GAME_CELLS) {
-        anim.after_move_board[to_idx] = anim.after_move_board[from_idx];
-        anim.after_move_board[from_idx] = 0;
-    }
-    memcpy(anim.after_clear_board, anim.after_move_board, sizeof(anim.after_clear_board));
-
-    bool moved_survived = false;
-    if (to_idx >= 0 && to_idx < GAME_CELLS && anim.move.color != 0) {
-        moved_survived = app->game.board[to_idx] == anim.move.color;
-    }
-
-    for (int idx = 0; idx < GAME_CELLS; ++idx) {
-        if (before[idx] != 0 && app->game.board[idx] == 0 && idx != from_idx) {
-            anim.cleared_idx[anim.cleared_count] = idx;
-            anim.cleared_color[anim.cleared_count] = before[idx];
-            ++anim.cleared_count;
-            anim.after_clear_board[idx] = 0;
-        } else if (before[idx] == 0 && app->game.board[idx] != 0) {
-            if (idx == to_idx && moved_survived) {
-                continue;
-            }
-            anim.spawned_idx[anim.spawned_count] = idx;
-            anim.spawned_color[anim.spawned_count] = app->game.board[idx];
-            ++anim.spawned_count;
-        }
-    }
-
-    if (to_idx >= 0 && to_idx < GAME_CELLS && anim.move.color != 0 && !moved_survived) {
-        bool already_added = false;
-        for (int i = 0; i < anim.cleared_count; ++i) {
-            if (anim.cleared_idx[i] == to_idx) {
-                already_added = true;
-                break;
-            }
-        }
-        if (!already_added) {
-            anim.cleared_idx[anim.cleared_count] = to_idx;
-            anim.cleared_color[anim.cleared_count] = anim.move.color;
-            ++anim.cleared_count;
-            anim.after_clear_board[to_idx] = 0;
-        }
-    }
-
-    if (from_idx >= 0 && from_idx < GAME_CELLS) {
-        app->render_board[from_idx] = 0;
-    }
-    if (to_idx >= 0 && to_idx < GAME_CELLS && !moved_survived) {
-        app->render_board[to_idx] = 0;
-    }
-
-    memcpy(app->render_board, anim.before_board, sizeof(app->render_board));
-    if (from_idx >= 0 && from_idx < GAME_CELLS) {
-        app->render_board[from_idx] = 0;
-    }
-
-    app->turn_anim = anim;
+    turn_anim_start(&app->turn_anim, before, app->game.board, from_idx, to_idx, path, path_len);
+    turn_anim_begin_render(&app->turn_anim, app->render_board, GAME_CELLS);
 }
 
+/* Returns growth scale for spawned ball or -1 when not in spawn phase. */
 static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
-    if (!anim->active || anim->phase != TURN_PHASE_SPAWN) {
-        return -1.0f;
-    }
-
-    int found = -1;
-    for (int i = 0; i < anim->spawned_count; ++i) {
-        if (anim->spawned_idx[i] == idx) {
-            found = i;
-            break;
-        }
-    }
-    if (found < 0) {
-        return -1.0f;
-    }
-
-    float k = anim->phase_t / anim->spawn_dur;
-    if (k > 1.0f) {
-        k = 1.0f;
-    }
-    if (k < 0.0f) {
-        k = 0.0f;
-    }
-    return k;
+    return turn_anim_spawn_scale_for_index(anim, idx);
 }
 
+/* Advances turn animation queue and triggers clear burst handoff. */
 static void update_turn_animation(App *app, float dt) {
-    TurnAnim *anim = &app->turn_anim;
-    if (!anim->active) {
-        return;
-    }
-
-    anim->phase_t += dt;
-
-    if (anim->phase == TURN_PHASE_MOVE) {
-        if (anim->phase_t >= anim->move_dur) {
-            anim->phase = TURN_PHASE_CLEAR;
-            anim->phase_t = 0.0f;
-            memcpy(app->render_board, anim->after_move_board, sizeof(app->render_board));
-            emit_clear_particles(app, anim);
-            memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
-            if (anim->cleared_count == 0) {
-                anim->phase = TURN_PHASE_SPAWN;
-                anim->phase_t = 0.0f;
-                memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
-            }
-        }
-        return;
-    }
-
-    if (anim->phase == TURN_PHASE_CLEAR) {
-        if (anim->phase_t >= anim->clear_dur) {
-            anim->phase = TURN_PHASE_SPAWN;
-            anim->phase_t = 0.0f;
-            memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
-        }
-        return;
-    }
-
-    if (anim->phase == TURN_PHASE_SPAWN) {
-        memcpy(app->render_board, anim->after_clear_board, sizeof(app->render_board));
-        for (int i = 0; i < anim->spawned_count; ++i) {
-            int idx = anim->spawned_idx[i];
-            app->render_board[idx] = anim->spawned_color[i];
-        }
-        if (anim->phase_t >= anim->spawn_dur) {
-            memcpy(app->render_board, anim->final_board, sizeof(app->render_board));
-            clear_turn_anim(app);
-        }
-        return;
+    bool emit = false;
+    turn_anim_update(&app->turn_anim, dt, app->render_board, GAME_CELLS, &emit);
+    if (emit) {
+        emit_clear_particles(app, &app->turn_anim);
     }
 }
 
+/* Advances particle simulation with board collisions. */
 static void update_particles(App *app, float dt) {
     const float gravity = 560.0f;
     const float bounce = 0.58f;
@@ -529,6 +383,7 @@ static void update_particles(App *app, float dt) {
     }
 }
 
+/* Draws all active particles with alpha fade. */
 static void draw_particles(SDL_Renderer *renderer, const App *app) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     for (int i = 0; i < MAX_PARTICLES; ++i) {
@@ -543,6 +398,7 @@ static void draw_particles(SDL_Renderer *renderer, const App *app) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
+/* Draws interpolated moving ball during MOVE phase. */
 static void draw_move_animation(SDL_Renderer *renderer, const App *app) {
     const TurnAnim *anim = &app->turn_anim;
     if (!anim->active || anim->phase != TURN_PHASE_MOVE || !anim->move.active || anim->move.color == 0 || anim->move.path_len < 2) {
@@ -583,6 +439,7 @@ static void draw_move_animation(SDL_Renderer *renderer, const App *app) {
     draw_ball(renderer, cx, cy, 23, BALL_COLORS[anim->move.color]);
 }
 
+/* Draws one seven-segment rectangle slice when enabled. */
 static void draw_segment(SDL_Renderer *renderer, int x, int y, int w, int h, bool on) {
     if (!on) {
         return;
@@ -591,6 +448,7 @@ static void draw_segment(SDL_Renderer *renderer, int x, int y, int w, int h, boo
     SDL_RenderFillRect(renderer, &r);
 }
 
+/* Draws one seven-segment digit. */
 static void draw_digit(SDL_Renderer *renderer, int x, int y, int scale, int digit) {
     static const bool segments[10][7] = {
         {true, true, true, true, true, true, false},
@@ -618,6 +476,7 @@ static void draw_digit(SDL_Renderer *renderer, int x, int y, int scale, int digi
     draw_segment(renderer, x + t, y + lh + t, lw, t, segments[digit][6]);
 }
 
+/* Draws one small bitmap glyph used in overlays. */
 static void draw_glyph(SDL_Renderer *renderer, int x, int y, int scale, char ch) {
     static const uint8_t glyph_space[7] = {0, 0, 0, 0, 0, 0, 0};
     static const uint8_t glyph_a[7] = {14, 17, 17, 31, 17, 17, 17};
@@ -674,6 +533,7 @@ static void draw_glyph(SDL_Renderer *renderer, int x, int y, int scale, char ch)
     }
 }
 
+/* Draws ASCII text using bitmap glyphs. */
 static void draw_text(SDL_Renderer *renderer, int x, int y, int scale, const char *text) {
     int cursor = x;
     for (const char *p = text; *p != '\0'; ++p) {
@@ -682,6 +542,7 @@ static void draw_text(SDL_Renderer *renderer, int x, int y, int scale, const cha
     }
 }
 
+/* Computes text width for the bitmap font at a given scale. */
 static int text_pixel_width(int scale, const char *text) {
     int len = 0;
     for (const char *p = text; *p != '\0'; ++p) {
@@ -690,6 +551,7 @@ static int text_pixel_width(int scale, const char *text) {
     return len * 6 * scale;
 }
 
+/* Renders top-right score display. */
 static void draw_score(SDL_Renderer *renderer, int score) {
     if (score < 0) {
         score = 0;
@@ -710,6 +572,7 @@ static void draw_score(SDL_Renderer *renderer, int score) {
     draw_digit(renderer, 640, 18, 2, d3);
 }
 
+/* Generates and queues a short synthesized tone. */
 static void play_tone(App *app, float frequency, int duration_ms, float gain) {
     if (!app->audio_ready || duration_ms <= 0) {
         return;
@@ -737,6 +600,7 @@ static void play_tone(App *app, float frequency, int duration_ms, float gain) {
     free(samples);
 }
 
+/* Initializes SDL systems, window, renderer, audio and game state. */
 static bool app_init(App *app) {
     memset(app, 0, sizeof(*app));
     srand((unsigned int)time(NULL));
@@ -786,6 +650,7 @@ static bool app_init(App *app) {
     return true;
 }
 
+/* Releases all SDL resources owned by the app. */
 static void app_shutdown(App *app) {
     if (app->audio_device != 0) {
         SDL_ClearQueuedAudio(app->audio_device);
@@ -806,6 +671,7 @@ static void app_shutdown(App *app) {
     SDL_Quit();
 }
 
+/* Draws preview balls for the next spawn step. */
 static void draw_next_balls(SDL_Renderer *renderer, const Game *game) {
     for (int i = 0; i < GAME_NEXT_COUNT; ++i) {
         int x = NEXT_OFFSET_X + i * 56;
@@ -814,6 +680,7 @@ static void draw_next_balls(SDL_Renderer *renderer, const Game *game) {
     }
 }
 
+/* Draws board grid and all balls from current render snapshot. */
 static void draw_board(SDL_Renderer *renderer, const App *app) {
     SDL_Rect board_rect = {BOARD_OFFSET_X, BOARD_OFFSET_Y, GAME_BOARD_SIZE * CELL_SIZE, GAME_BOARD_SIZE * CELL_SIZE};
     set_color(renderer, GRID_BG);
@@ -862,6 +729,7 @@ static void draw_board(SDL_Renderer *renderer, const App *app) {
     }
 }
 
+/* Draws game-over overlay panel and final score. */
 static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible) {
     if (!visible) {
         return;
@@ -903,6 +771,7 @@ static void draw_overlay(SDL_Renderer *renderer, const Game *game, bool visible)
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
+/* Handles left click input with selection/move/restart rules. */
 static void handle_click(App *app, int x, int y) {
     if (app->turn_anim.active) {
         return;
@@ -935,7 +804,7 @@ static void handle_click(App *app, int x, int y) {
     memcpy(before, app->game.board, sizeof(before));
     int selected_before = app->game.selected_index;
     int to_idx = rc_to_idx(row, col);
-    int path[MAX_PATH_NODES];
+    int path[TA_MAX_PATH_NODES];
     int path_len = 0;
     if (selected_before >= 0 && selected_before < GAME_CELLS && before[to_idx] == 0) {
         (void)build_move_path(before, selected_before, to_idx, path, &path_len);
@@ -959,6 +828,7 @@ static void handle_click(App *app, int x, int y) {
     }
 }
 
+/* Runs SDL event loop, frame updates and rendering. */
 int main(void) {
     App app;
     if (!app_init(&app)) {

@@ -1,30 +1,39 @@
+/* Core Lines-98 rules engine.
+   This module is SDL-independent and fully unit-testable. */
+
 #include "game.h"
 
 #include <string.h>
 
+/* Checks whether board coordinates are inside 9x9 bounds. */
 static bool in_bounds(int row, int col) {
     return row >= 0 && row < GAME_BOARD_SIZE && col >= 0 && col < GAME_BOARD_SIZE;
 }
 
+/* Converts row/col to linear board index. */
 static int to_index(int row, int col) {
     return row * GAME_BOARD_SIZE + col;
 }
 
+/* Converts linear board index back to row/col. */
 static void to_row_col(int idx, int *row, int *col) {
     *row = idx / GAME_BOARD_SIZE;
     *col = idx % GAME_BOARD_SIZE;
 }
 
+/* Generates one random ball color in [1..GAME_COLORS]. */
 static int generate_color(Game *game) {
     return (int)rng_range(&game->rng, GAME_COLORS) + 1;
 }
 
+/* Rolls preview colors for the next spawn step. */
 static void generate_next(Game *game) {
     for (int i = 0; i < GAME_NEXT_COUNT; ++i) {
         game->next_colors[i] = (uint8_t)generate_color(game);
     }
 }
 
+/* Counts current number of empty board cells. */
 int game_empty_count(const Game *game) {
     int count = 0;
     for (int i = 0; i < GAME_CELLS; ++i) {
@@ -35,6 +44,7 @@ int game_empty_count(const Game *game) {
     return count;
 }
 
+/* Places up to count balls into random empty cells. */
 static int spawn_random_balls(Game *game, const uint8_t *colors, int count) {
     int empties[GAME_CELLS];
     int empty_count = 0;
@@ -57,6 +67,7 @@ static int spawn_random_balls(Game *game, const uint8_t *colors, int count) {
     return placed;
 }
 
+/* Detects and removes all lines with length >= 5; returns removed count. */
 static int clear_lines(Game *game) {
     static const int dirs[4][2] = {
         {1, 0},
@@ -125,6 +136,7 @@ static int clear_lines(Game *game) {
     return cleared;
 }
 
+/* Applies post-move turn logic: clear, optional spawn, next preview, game-over. */
 static bool finish_turn(Game *game) {
     int cleared = clear_lines(game);
     if (cleared == 0) {
@@ -142,6 +154,7 @@ static bool finish_turn(Game *game) {
     return false;
 }
 
+/* Resets whole game state and seeds initial board. */
 void game_init(Game *game, uint32_t seed) {
     memset(game, 0, sizeof(*game));
     rng_seed(&game->rng, seed);
@@ -158,6 +171,7 @@ void game_init(Game *game, uint32_t seed) {
     (void)spawn_random_balls(game, initial, 5);
 }
 
+/* Returns cell color or 0 for out-of-bounds access. */
 uint8_t game_get_cell(const Game *game, int row, int col) {
     if (!in_bounds(row, col)) {
         return 0;
@@ -165,6 +179,7 @@ uint8_t game_get_cell(const Game *game, int row, int col) {
     return game->board[to_index(row, col)];
 }
 
+/* BFS path check between a source ball and an empty destination cell. */
 bool game_can_reach(const Game *game, int from_row, int from_col, int to_row, int to_col) {
     if (!in_bounds(from_row, from_col) || !in_bounds(to_row, to_col)) {
         return false;
@@ -224,6 +239,7 @@ bool game_can_reach(const Game *game, int from_row, int from_col, int to_row, in
     return false;
 }
 
+/* Handles one click action (select or move) and advances game state. */
 GameAction game_click(Game *game, int row, int col) {
     if (!in_bounds(row, col) || game->game_over) {
         return GAME_ACTION_INVALID;
