@@ -39,6 +39,14 @@ if get_option('build_game')
     c_args: strict_c_args,
     install: true,
   )
+
+  audio_fx_exe = executable(
+    'lines98_audio_fx_tests',
+    ['tests/test_audio_fx.c', 'src/audio_fx.c'],
+    include_directories: inc,
+    dependencies: [sdl2_dep, m_dep],
+    c_args: strict_c_args,
+  )
 endif
 
 test_exe = executable(
@@ -117,6 +125,16 @@ if get_option('enable_lsan')
     env: [
       'ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1',
       'LSAN_OPTIONS=detect_leaks=1',
+    ],
+  )
+endif
+
+if get_option('build_game')
+  test(
+    'audio-fx-safety-tests',
+    audio_fx_exe,
+    env: [
+      'ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1',
     ],
   )
 endif

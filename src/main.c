@@ -133,6 +133,7 @@ static void update_turn_animation(App *app, float dt) {
     turn_anim_update(&app->turn_anim, dt, app->render_board, GAME_CELLS, &emit);
     if (emit) {
         emit_clear_particles(app, &app->turn_anim);
+        audio_fx_play_line_clear(&app->audio, turn_anim_cleared_count(&app->turn_anim));
     }
 }
 
@@ -374,7 +375,7 @@ static void handle_click(App *app, int x, int y) {
         sync_render_board(app);
         clear_turn_anim(app);
         clear_particles(app);
-        audio_fx_play_tone(&app->audio, 640.0f, 100, 0.18f);
+        audio_fx_play_restart(&app->audio);
         return;
     }
 
@@ -395,19 +396,17 @@ static void handle_click(App *app, int x, int y) {
     int old_score = result.score_before;
     GameAction action = result.action;
     if (action == GAME_ACTION_INVALID) {
-        audio_fx_play_tone(&app->audio, 140.0f, 60, 0.12f);
+        audio_fx_play_invalid(&app->audio);
     } else if (action == GAME_ACTION_SELECTED) {
-        audio_fx_play_tone(&app->audio, 300.0f, 40, 0.08f);
+        audio_fx_play_select(&app->audio);
     } else if (action == GAME_ACTION_MOVED) {
         start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
-        if (app->game.score > old_score) {
-            audio_fx_play_tone(&app->audio, 920.0f, 180, 0.18f);
-        } else {
-            audio_fx_play_tone(&app->audio, 440.0f, 80, 0.10f);
+        if (app->game.score <= old_score) {
+            audio_fx_play_move(&app->audio);
         }
     } else if (action == GAME_ACTION_GAME_OVER) {
         start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
-        audio_fx_play_tone(&app->audio, 200.0f, 260, 0.20f);
+        audio_fx_play_game_over(&app->audio);
     }
 }
 
@@ -440,7 +439,7 @@ int main(void) {
                 sync_render_board(&app);
                 clear_turn_anim(&app);
                 clear_particles(&app);
-                audio_fx_play_tone(&app.audio, 640.0f, 100, 0.18f);
+                audio_fx_play_restart(&app.audio);
             }
         }
         update_turn_animation(&app, dt);
