@@ -64,7 +64,7 @@ ASan/UBSan:
 ::
 
    meson setup build-asan -Db_sanitize=address,undefined -Dbuild_game=false
-   meson test -C build-asan --print-errorlogs
+   meson test -C build-asan core-tests turn-anim-tests turn-controller-tests core-stress-tests --print-errorlogs
 
 LeakSanitizer (for environments where ``ptrace`` is available):
 
@@ -75,3 +75,14 @@ LeakSanitizer (for environments where ``ptrace`` is available):
 
 Note: in some sandboxed CI environments LeakSanitizer can be unavailable due
 to kernel restrictions.
+
+Valgrind (separate build, no sanitizers):
+
+::
+
+   meson setup build-vg -Db_sanitize=none -Dbuild_game=false
+   meson test -C build-vg core-tests-valgrind core-stress-tests-valgrind --print-errorlogs
+
+Do not mix ASan/UBSan with Valgrind in the same build. Valgrind may also
+require glibc debug symbols on some Linux distributions (for example
+``glibc-debug`` on Arch or ``libc6-dbg`` on Debian/Ubuntu).

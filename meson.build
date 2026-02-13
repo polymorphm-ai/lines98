@@ -140,7 +140,8 @@ if get_option('build_game')
 endif
 
 valgrind = find_program('valgrind', required: false)
-if valgrind.found()
+sanitizers_enabled = get_option('b_sanitize') != 'none'
+if valgrind.found() and not sanitizers_enabled
   test(
     'core-tests-valgrind',
     valgrind,
