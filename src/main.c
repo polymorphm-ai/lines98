@@ -349,9 +349,25 @@ static void start_turn_animation(
 }
 
 static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
-    if (!anim->active || anim->t < anim->spawn_start) {
+    if (!anim->active) {
+        return -1.0f;
+    }
+
+    int found = -1;
+    for (int i = 0; i < anim->spawned_count; ++i) {
+        if (anim->spawned_idx[i] == idx) {
+            found = i;
+            break;
+        }
+    }
+    if (found < 0) {
+        return -1.0f;
+    }
+
+    if (anim->t < anim->spawn_start) {
         return 0.0f;
     }
+
     float k = (anim->t - anim->spawn_start) / 0.20f;
     if (k > 1.0f) {
         k = 1.0f;
@@ -359,12 +375,7 @@ static float spawned_scale_for_index(const TurnAnim *anim, int idx) {
     if (k < 0.0f) {
         k = 0.0f;
     }
-    for (int i = 0; i < anim->spawned_count; ++i) {
-        if (anim->spawned_idx[i] == idx) {
-            return k;
-        }
-    }
-    return -1.0f;
+    return k;
 }
 
 static void update_turn_animation(App *app, float dt) {
