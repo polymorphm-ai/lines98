@@ -7,10 +7,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include "audio_fx.h"
 #include "fx_particles.h"
 #include "game.h"
 #include "render_ui.h"
@@ -32,9 +32,7 @@
 typedef struct {
     SDL_Window *window;
     SDL_Renderer *renderer;
-    SDL_AudioDeviceID audio_device;
-    SDL_AudioSpec audio_spec;
-    bool audio_ready;
+    AudioFx audio;
     Game game;
     uint8_t render_board[GAME_CELLS];
     TurnAnim turn_anim;
@@ -207,34 +205,6 @@ static void draw_score(SDL_Renderer *renderer, int score) {
     ru_draw_digit(renderer, 640, 18, 2, d3);
 }
 
-/* Generates and queues a short synthesized tone. */
-static void play_tone(App *app, float frequency, int duration_ms, float gain) {
-    if (!app->audio_ready || duration_ms <= 0) {
-        return;
-    }
-
-    int sample_count = (app->audio_spec.freq * duration_ms) / 1000;
-    if (sample_count <= 0) {
-        return;
-    }
-
-    float *samples = (float *)malloc((size_t)sample_count * sizeof(float));
-    if (samples == NULL) {
-        return;
-    }
-
-    float phase = 0.0f;
-    float step = 2.0f * (float)M_PI * frequency / (float)app->audio_spec.freq;
-    for (int i = 0; i < sample_count; ++i) {
-        float env = 1.0f - (float)i / (float)sample_count;
-        samples[i] = sinf(phase) * gain * env;
-        phase += step;
-    }
-
-    SDL_QueueAudio(app->audio_device, samples, (Uint32)(sample_count * (int)sizeof(float)));
-    free(samples);
-}
-
 /* Initializes SDL systems, window, renderer, audio and game state. */
 static bool app_init(App *app) {
     memset(app, 0, sizeof(*app));
@@ -265,18 +235,7 @@ static bool app_init(App *app) {
         return false;
     }
 
-    SDL_AudioSpec want;
-    SDL_zero(want);
-    want.freq = 48000;
-    want.format = AUDIO_F32SYS;
-    want.channels = 1;
-    want.samples = 1024;
-
-    app->audio_device = SDL_OpenAudioDevice(NULL, 0, &want, &app->audio_spec, 0);
-    if (app->audio_device != 0) {
-        SDL_PauseAudioDevice(app->audio_device, 0);
-        app->audio_ready = true;
-    }
+    audio_fx_init(&app->audio);
 
     game_init(&app->game, (uint32_t)time(NULL));
     sync_render_board(app);
@@ -287,11 +246,7 @@ static bool app_init(App *app) {
 
 /* Releases all SDL resources owned by the app. */
 static void app_shutdown(App *app) {
-    if (app->audio_device != 0) {
-        SDL_ClearQueuedAudio(app->audio_device);
-        SDL_CloseAudioDevice(app->audio_device);
-        app->audio_device = 0;
-    }
+    audio_fx_shutdown(&app->audio);
 
     if (app->renderer != NULL) {
         SDL_DestroyRenderer(app->renderer);
@@ -419,7 +374,7 @@ static void handle_click(App *app, int x, int y) {
         sync_render_board(app);
         clear_turn_anim(app);
         clear_particles(app);
-        play_tone(app, 640.0f, 100, 0.18f);
+        audio_fx_play_tone(&app->audio, 640.0f, 100, 0.18f);
         return;
     }
 
@@ -440,19 +395,19 @@ static void handle_click(App *app, int x, int y) {
     int old_score = result.score_before;
     GameAction action = result.action;
     if (action == GAME_ACTION_INVALID) {
-        play_tone(app, 140.0f, 60, 0.12f);
+        audio_fx_play_tone(&app->audio, 140.0f, 60, 0.12f);
     } else if (action == GAME_ACTION_SELECTED) {
-        play_tone(app, 300.0f, 40, 0.08f);
+        audio_fx_play_tone(&app->audio, 300.0f, 40, 0.08f);
     } else if (action == GAME_ACTION_MOVED) {
         start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
         if (app->game.score > old_score) {
-            play_tone(app, 920.0f, 180, 0.18f);
+            audio_fx_play_tone(&app->audio, 920.0f, 180, 0.18f);
         } else {
-            play_tone(app, 440.0f, 80, 0.10f);
+            audio_fx_play_tone(&app->audio, 440.0f, 80, 0.10f);
         }
     } else if (action == GAME_ACTION_GAME_OVER) {
         start_turn_animation(app, result.before_board, result.from_idx, result.to_idx, result.path, result.path_len);
-        play_tone(app, 200.0f, 260, 0.20f);
+        audio_fx_play_tone(&app->audio, 200.0f, 260, 0.20f);
     }
 }
 
@@ -485,7 +440,7 @@ int main(void) {
                 sync_render_board(&app);
                 clear_turn_anim(&app);
                 clear_particles(&app);
-                play_tone(&app, 640.0f, 100, 0.18f);
+                audio_fx_play_tone(&app.audio, 640.0f, 100, 0.18f);
             }
         }
         update_turn_animation(&app, dt);
